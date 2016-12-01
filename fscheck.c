@@ -5,6 +5,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/mman.h>
+#include <stdlib.h>
 
 // Block 0 is unused.
 // Block 1 is super block.
@@ -13,6 +14,13 @@
 #define ROOTINO 1  // root i-number
 #define BSIZE 512  // block size
 #define NDIRECT 12
+// Directory is a file containing a sequence of dirent structures.
+#define DIRSIZ 14
+
+// Inode types
+#define T_DIR  1   // Directory
+#define T_FILE 2   // File
+#define T_DEV  3   // Special device
 
 // File system super block
 struct superblock {
@@ -31,11 +39,22 @@ struct dinode {
   uint addrs[NDIRECT+1];   // Data block addresses
 };
 
+struct dirent {
+  ushort inum;
+  char name[DIRSIZ];
+};
+
 int main(int argc, char *argv[]) {
   // TODO Check argc, argv. Use argv[1]
+  if (argc != 2) {
 
-  int fd = open("fs.img", O_RDONLY);
-  assert(fd > -1);
+  }
+
+  int fd = open(argv[1], O_RDONLY);
+  if (fd < 0) {
+    fprintf(stderr, "image not found.\n");
+    exit(1);    
+  }
 
   int rc;
   struct stat sbuf;
@@ -52,13 +71,18 @@ int main(int argc, char *argv[]) {
   int i;
   struct dinode *dip = (struct dinode *) (img_ptr + (2*BSIZE));
   for (i = 0; i < sb->ninodes; i++) {
-    printf("%d: type %d\n", i, dip->type);
+    // printf("%d: type %d\n", i, dip->type);
+    // Each inode is either unallocated or one of the valid types
+    if (dip->type < 0 || dip->type > 4) {
+      fprintf(stderr, "bad inode.\n");
+      exit(1);
+    }
     dip++;
   }
 
   // figure out where the bitmap is
 
-  // do other stuff (rest of p5)
+  // do other stuff (rest of p)
 
   return 0;
 }
