@@ -92,16 +92,24 @@ int main(int argc, char *argv[]) {
     }
   }
   /****************************** INODE CHECKER *******************************/
-  int j, k, block_use, bitmap_value, num_dir_entries, curr_entry_inum;
-  int num_indirect_blocks, found_root = 0;
+  int j, k, l, block_use, bitmap_value, num_dir_entries, curr_entry_inum;
+  int num_indirect_blocks, num_inode_blocks, inode_index, found_root = 0;
   int dir_inodes[sb->ninodes];  // Keep track of inodes that are directories
   int ref_to_parent[sb->ninodes];  // Reference from entry to parent directory
   int ref_back[sb->ninodes];  // Reference back to entry
   int num_refs[sb->ninodes];  // Number of references to each of the inodes
+  int is_inode_used[sb->ninodes];  // 1 if inode used, 0 otherwise
 
-  struct dinode *dip = (struct dinode *) (img_indirect_block + (2*BSIZE));  // First one
+  struct dinode *dip;
   struct dirent *dir_entry;
-  for (i = 0; i < sb->ninodes; i++) {
+
+  num_inode_blocks = sb->ninodes / IPB;
+  inode_index = 0;
+
+  for (l = 2; l < num_inode_blocks + 2; l++) {
+  dip = (struct dinode*) (img_indirect_block + (2*BSIZE));  // First one
+
+  for (i = 0; i < IPB; i++) {
     // Each inode is either unallocated or one of the valid types
     if (dip->type < 0 || dip->type > 3) {
       fprintf(stderr, "bad inode.\n");
@@ -230,6 +238,8 @@ int main(int argc, char *argv[]) {
       }
     dip++;
     }
+  }
+
   }
 
   // figure out where the bitmap is
