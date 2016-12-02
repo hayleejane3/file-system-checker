@@ -67,16 +67,16 @@ int main(int argc, char *argv[]) {
   assert(rc == 0);
 
   // Structure: unused block | superblock | inode table | bitmap | data blocks
-  void *img_ptr = mmap(NULL, sbuf.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
-  assert(img_ptr != MAP_FAILED);
+  void *img_indirect_block = mmap(NULL, sbuf.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
+  assert(img_indirect_block != MAP_FAILED);
 
   // Superblock
-  struct superblock *sb = (struct superblock *) (img_ptr + BSIZE);
+  struct superblock *sb = (struct superblock *) (img_indirect_block + BSIZE);
   printf("%d %d %d\n", sb->size, sb->nblocks, sb->ninodes);
 
   // Bitmap
   int bitmap_block = sb->ninodes / IPB + 3;
-  char *bitmap_buf = (char *)(img_ptr + (bitmap_block * BSIZE));
+  char *bitmap_buf = (char *)(img_indirect_block + (bitmap_block * BSIZE));
 
   // Data
   int num_bit_blocks = sb->size / (BSIZE * 8) + 1;  // 8 bits a byte; 1 based indexing
@@ -93,13 +93,13 @@ int main(int argc, char *argv[]) {
   }
   /****************************** INODE CHECKER *******************************/
   int j, k, block_use, bitmap_value, num_dir_entries, curr_entry_inum;
-  int found_root = 0;
+  int num_indirect_blocks, found_root = 0;
   int dir_inodes[sb->ninodes];  // Keep track of inodes that are directories
   int ref_to_parent[sb->ninodes];  // Reference from entry to parent directory
   int ref_back[sb->ninodes];  // Reference back to entry
   int num_refs[sb->ninodes];  // Number of references to each of the inodes
 
-  struct dinode *dip = (struct dinode *) (img_ptr + (2*BSIZE));  // First one
+  struct dinode *dip = (struct dinode *) (img_indirect_block + (2*BSIZE));  // First one
   struct dirent *dir_entry;
   for (i = 0; i < sb->ninodes; i++) {
     // Each inode is either unallocated or one of the valid types
@@ -112,6 +112,8 @@ int main(int argc, char *argv[]) {
     if (dip->type != 0) {
       /**************************** DIRECT BLOCKS *****************************/
       for (j = 0; j <= NDIRECT; j++) {
+
+        /************************ Address use checks **************************/
         // Check if each address that is used by inode is valid
         if (dip->addrs[j] != 0 &&   // || instead of &&?
             (dip->addrs[j] < data_block || dip->addrs[j] > 1023)) {
@@ -119,31 +121,30 @@ int main(int argc, char *argv[]) {
           exit(1);
         }
 
-        /************************ Address use checks **************************/
         block_use = dip->addrs[j];
         bitmap_value = data_bitmap[block_use];
 
-        // Increase use count for all checked bits to compare later(mark bitmap)
-        if(block_use > 0){
+        if (block_use > 0) {
+          // Increase use count for all checked bits to compare later(mark bitmap)
           data_bitmap[block_use]++;
-        }
 
-        // Check that each address in use is also marked in use in the bitmap
-        if(block_use > 0 && bitmap_value == 0){  // if(dip->addrs[j] > 0 && !bitmap_val)
-          fprintf(stderr,"address used by inode but marked free in bitmap.\n");
-          exit(1);
-        }
+          // Check that each address in use is also marked in use in the bitmap
+          if (bitmap_value == 0) {  // if(dip->addrs[j] > 0 && !bitmap_val)
+            fprintf(stderr,"address used by inode but marked free in bitmap.\n");
+            exit(1);
+          }
 
-        // Check that any address in use is only used once.
-        if (block_use > 0 && data_bitmap[block_use] > 2) {
-          fprintf(stderr,"address used more than once.\n");
-          exit(1);
+          // Check that any address in use is only used once.
+          if (data_bitmap[block_use] > 2) {  // 2 since just incremented 1 extra
+            fprintf(stderr,"address used more than once.\n");
+            exit(1);
+          }
         }
 
         /********************* Directory specific checks **********************/
         if (dip->type == 1) {
-          dir_entry = (struct dirent *)(img_ptr + (block_use * BSIZE));  //First
           num_dir_entries = BSIZE / sizeof(struct dirent);
+          dir_entry = (struct dirent*)(img_indirect_block + (block_use * BSIZE));  //First
           k = 0;
 
           // Check that each directory contains . and .. as first two entries
@@ -183,6 +184,50 @@ int main(int argc, char *argv[]) {
       }
 
       /*************************** INDIRECT BLOCKS ****************************/
+      num_indirect_blocks = BSIZE / sizeof(uint);
+      block_use = dip->addrs[NDIRECT];
+      uint *indirect_block = (uint*)(img_indirect_block + (block_use * BSIZE));
+      for (j = 0; j < num_indirect_blocks; j++) {
+        /************************ Address use checks **************************/
+        // Check that each address that is used by inode is valid
+        if ((*indirect_block < data_block || *indirect_block > 1023) &&
+               *indirect_block != 0) {
+          fprintf(stderr,"bad address in inode.\n");
+          exit(1);
+        }
+
+        if (*indirect_block > 0) {
+          // Increase use count for all checked bits to compare later(mark bitmap)
+          data_bitmap[*indirect_block]++;
+
+          // Check that each address in use is also marked in use in the bitmap
+          if (!data_bitmap[*indirect_block]) {
+            fprintf(stderr,"address used by inode but marked free in bitmap.\n");
+            exit(1);
+          }
+
+           ///////////// TODO MOVE TO OUTSIDE OF IF IF FAILS. > 0 COND NOT THERE
+          // Check that any address in use is only used once
+          if (data_bitmap[*indirect_block] > 2) {  // 2 since just incremented 1 extra
+            fprintf(stderr,"address used more than once.\n");
+            exit(1);
+          }
+        }
+
+        /********************* Directory specific checks **********************/
+        if (dip->type == 1) {
+          num_dir_entries = BSIZE / sizeof(struct dirent);
+          dir_entry = (struct dirent *)(img_indirect_block + (*indirect_block * BSIZE));
+          for (k = 0; k < num_dir_entries; k++) {
+            if (dir_entry->inum != 0) {
+              ref_back[dir_entry->inum] = curr_entry_inum;
+              num_refs[dir_entry->inum]++;
+            }
+            dir_entry++;
+          }
+        }
+        indirect_block++;
+      }
     dip++;
     }
   }
