@@ -57,7 +57,7 @@ int main(int argc, char *argv[]) {
 
   int fd = open(argv[1], O_RDONLY);
   if (fd < 0) {
-    fprintf(stderr, "ERROR: image not found.\n");
+    fprintf(stderr, "image not found.\n");
     exit(1);
   }
 
@@ -84,7 +84,7 @@ int main(int argc, char *argv[]) {
   // Set up bitmap of data
   int data_bitmap[sb->size];  // Made large for better indexing later
   int i;
-  for (i = data_block; i < sb->size; i++){
+  for (i = data_block; i < sb->size; i++) {
     if ((bitmap_buf[i / 8] & (0x1 << (i % 8))) > 0) {
       data_bitmap[i] = 1;
     } else {
@@ -100,7 +100,6 @@ int main(int argc, char *argv[]) {
   int num_refs[sb->ninodes];  // Number of references to each of the inodes
   int num_refs_real[sb->ninodes];  // nlinks if inode used, 1(from type != 0) otherwise
 
-  struct dinode *dip;
   struct dirent *dir_entry;
 
   num_inode_blocks = sb->ninodes / IPB;
@@ -109,8 +108,12 @@ int main(int argc, char *argv[]) {
   // For root directory
   num_refs[1] = ref_back[1] = 1;
 
+  for (i = 0; i < sb->ninodes; i++) {
+    ref_back[i] = ref_to_parent[i] = 0;
+  }
+
   for (l = 2; l < num_inode_blocks + 2; l++) {
-    dip = (struct dinode*) (img_indirect_block + (2*BSIZE));  // First one
+    struct dinode *dip = (struct dinode*) (img_indirect_block + (2*BSIZE));  // First one
 
     for (i = 0; i < IPB; i++) {
       // Each inode is either unallocated or one of the valid types
@@ -134,6 +137,8 @@ int main(int argc, char *argv[]) {
 
           /*********************** Address use checks *************************/
           // Check if each address that is used by inode is valid
+        //  printf("%d: %d  %d  \n", j, dip->addrs[j], data_block);
+
           if (dip->addrs[j] != 0 &&   // || instead of &&?
             (dip->addrs[j] < data_block || dip->addrs[j] > 1023)) {
               fprintf(stderr,"ERROR: bad address in inode.\n");
@@ -209,8 +214,7 @@ int main(int argc, char *argv[]) {
           for (j = 0; j < num_indirect_blocks; j++) {
             /********************** Address use checks ************************/
             // Check that each address that is used by inode is valid
-            if ((*indirect_block < data_block || *indirect_block > 1023) &&
-            *indirect_block != 0) {
+            if (*indirect_block != 0 && (*indirect_block < data_block || *indirect_block > 1023)) {
               fprintf(stderr,"ERROR: bad address in inode.\n");
               exit(1);
             }
@@ -220,23 +224,21 @@ int main(int argc, char *argv[]) {
               data_bitmap[*indirect_block]++;
 
               // Check that each address in use is also marked in use in the bitmap
-              if (!data_bitmap[*indirect_block]) {
+              if (data_bitmap[*indirect_block] == 0) {
                 fprintf(stderr,"ERROR: address used by inode but marked free in bitmap.\n");
                 exit(1);
               }
-
-              ///////////// TODO MOVE TO OUTSIDE OF IF IF FAILS. > 0 COND NOT THERE
-              // Check that any address in use is only used once
-              if (data_bitmap[*indirect_block] > 2) {  // 2 since just incremented 1 extra
-                fprintf(stderr,"ERROR: address used more than once.\n");
-                exit(1);
-              }
+            }
+            // Check that any address in use is only used once
+            if (data_bitmap[*indirect_block] > 2) {  // 2 since just incremented 1 extra
+              fprintf(stderr,"ERROR: address used more than once.\n");
+              exit(1);
             }
 
             /******************* Directory specific checks ********************/
             if (dip->type == 1) {
               num_dir_entries = BSIZE / sizeof(struct dirent);
-              dir_entry = (struct dirent *)(img_indirect_block + (*indirect_block * BSIZE));
+              dir_entry = (struct dirent*)(img_indirect_block + (*indirect_block * BSIZE));
               for (k = 0; k < num_dir_entries; k++) {
                 if (dir_entry->inum != 0) {
                   ref_back[dir_entry->inum] = curr_entry_inum;
@@ -247,7 +249,6 @@ int main(int argc, char *argv[]) {
             }
             indirect_block++;
           }
-          dip++;
         }
 
         // Check that root directory exists, and it is inode number 1
@@ -256,6 +257,7 @@ int main(int argc, char *argv[]) {
           exit(1);
         }
         inode_number++;
+        dip++;
       }
     }
     /*********************** Bitmap usage count checks ************************/
@@ -287,7 +289,7 @@ int main(int argc, char *argv[]) {
       } else { /******************** File specific checks *********************/
         // Check that reference counts (number of links) for regular files match
         // the number of times file is referred to in directories
-        if (num_refs[i] > 1 || num_refs_real[i] > 1) {
+        if (num_refs[i] != num_refs_real[i]) {
           fprintf(stderr,"ERROR: bad reference count for file.\n");
           exit(1);
         }
