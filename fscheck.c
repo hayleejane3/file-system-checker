@@ -65,6 +65,9 @@ int data_bitmap[SB_SIZE];
 // Boolean used for root directory check
 int found_root = 0;  // Set to 1 when root directory is found
 
+/**
+ * Process a single inode (passed as argument) and check it.
+ */
 int process_inode(struct dinode *dip){
   // Check that each inode is either unallocated or one of the valid types
   if (dip->type < 0 || dip->type > 3) {
