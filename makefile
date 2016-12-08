@@ -1,7 +1,7 @@
 CC=gcc
 CFLAGS=-Wall -g
 
-fscheck: fscheck.c
+all:
 	$(CC) -o fscheck $(CFLAGS) fscheck.c
 
 clean:
